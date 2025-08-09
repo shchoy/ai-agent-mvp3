@@ -1,0 +1,35 @@
+# Core LangChain packages - latest stable versions
+langchain==0.3.27
+langchain-openai==0.3.28
+langchain-pinecone==0.2.11
+langchain-community==0.3.27
+langchain-core==0.3.74
+langsmith==0.4.13
+
+# OpenAI API
+openai==1.99.3
+
+# Vector database - new Pinecone API
+pinecone==7.3.0
+
+# Environment and configuration
+python-dotenv==1.1.1
+
+# Web framework
+streamlit==1.48.0
+
+# Document processing
+pypdf2==3.0.1
+python-docx==1.2.0
+openpyxl==3.1.5
+
+# Data processing
+pandas==2.3.1
+numpy==2.2.6
+
+# Data validation
+pydantic==2.11.7
+typing-extensions==4.14.1
+
+# ZIP file handling
+zipfile36==0.1.3
