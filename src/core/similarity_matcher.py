@@ -66,7 +66,7 @@ class SimilarityMatcher:
     
     def _create_search_query(self, tender_info: TenderInformation) -> str:
         """
-        Create search query text from tender information
+        Create search query text from tender information using raw LLM extraction
         
         Args:
             tender_info: Tender information object
@@ -74,6 +74,11 @@ class SimilarityMatcher:
         Returns:
             Search query string
         """
+        # Use the raw LLM extraction text which contains all the structured information
+        if hasattr(tender_info, 'llm_extraction_text') and tender_info.llm_extraction_text:
+            return tender_info.llm_extraction_text
+        
+        # Fallback to building query from individual fields if no raw extraction available
         query_parts = []
         
         # Add solution summary
@@ -196,8 +201,14 @@ class SimilarityMatcher:
             Detailed similarity analysis
         """
         try:
-            # Prepare tender information for LLM
-            tender_summary = self._summarize_tender_for_llm(tender_info)
+            # Use the raw LLM extraction text for similarity analysis
+            # This preserves all the structured information from the LLM
+            raw_extraction = getattr(tender_info, 'raw_extraction', None) or getattr(tender_info, 'llm_extraction_text', None)
+            
+            if not raw_extraction:
+                # Fallback to summary if raw extraction not available
+                logger.warning("Raw extraction not available, falling back to summary")
+                raw_extraction = self._summarize_tender_for_llm(tender_info)
             
             # Prepare historical projects data
             historical_data = []
@@ -213,8 +224,9 @@ class SimilarityMatcher:
                 }
                 historical_data.append(project_data)
             
-            # Generate analysis using LLM
-            analysis = self.llm_service.analyze_similarities(tender_summary, historical_data)
+            # Generate analysis using LLM with raw extraction text
+            # This focuses on technical similarity excluding administrative details
+            analysis = self.llm_service.analyze_similarities(raw_extraction, historical_data)
             
             return analysis
             

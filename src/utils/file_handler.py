@@ -309,9 +309,6 @@ class FileHandler:
             
             return extracted_texts
             
-            logger.info(f"Successfully extracted text from {len(extracted_texts)} files")
-            return extracted_texts
-            
         except Exception as e:
             logger.error(f"Error processing ZIP file: {str(e)}")
             raise

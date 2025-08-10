@@ -73,6 +73,10 @@ class TenderInformation(BaseModel):
     # Raw extracted text for further analysis
     raw_documents: Dict[str, str] = Field(default_factory=dict, description="Raw text from documents")
     
+    # Store the complete LLM extraction for reference
+    raw_extraction: Optional[str] = Field(None, description="Complete structured extraction from LLM")
+    llm_extraction_text: Optional[str] = Field(None, description="LLM extraction text for reference")
+    
     # Confidence scores
     extraction_confidence: float = Field(0.0, description="Confidence score for information extraction")
 

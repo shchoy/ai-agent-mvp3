@@ -8,14 +8,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
 class Config:
     """Application configuration"""
     
     # OpenAI Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")  # Use mini for better token limits
     OPENAI_TEMPERATURE: float = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
+    
+    # Token Management
+    MAX_TOKENS_PER_REQUEST: int = int(os.getenv("MAX_TOKENS_PER_REQUEST", "25000"))
+    MAX_TOKENS_OUTPUT: int = int(os.getenv("MAX_TOKENS_OUTPUT", "4000"))
+    CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "15000"))  # Characters per chunk
+    CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "1000"))  # Overlap between chunks
     
     # Pinecone Configuration
     PINECONE_API_KEY: str = os.getenv("PINECONE_API_KEY", "")

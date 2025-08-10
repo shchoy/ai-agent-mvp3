@@ -147,8 +147,14 @@ class TenderQualificationAgent:
             Bidding recommendation with detailed reasoning
         """
         try:
-            # Determine if we should bid based on ALL criteria
+            # Check if critical information is available
+            has_response_date = tender_info.response_date is not None
+            has_tender_value = tender_info.max_tender_value is not None
+            
+            # Determine if we should bid based on ALL criteria AND having critical information
             should_bid = (
+                has_response_date and  # Must have response date to evaluate timeline
+                has_tender_value and   # Must have tender value to evaluate financial criteria
                 highest_similarity >= self.config.SIMILARITY_THRESHOLD and
                 compatibility.get('meets_value_threshold', False) and
                 compatibility.get('meets_timeline_threshold', False) and
@@ -160,8 +166,8 @@ class TenderQualificationAgent:
             confidence_factors = [
                 highest_similarity,
                 tender_info.extraction_confidence,
-                1.0 if compatibility.get('meets_value_threshold', False) else 0.0,
-                1.0 if compatibility.get('meets_timeline_threshold', False) else 0.0,
+                1.0 if has_response_date and compatibility.get('meets_timeline_threshold', False) else 0.0,
+                1.0 if has_tender_value and compatibility.get('meets_value_threshold', False) else 0.0,
                 1.0 if compatibility.get('cloud_compatibility', False) else 0.0,
                 1.0 if compatibility.get('project_type_match', False) else 0.0
             ]
@@ -190,8 +196,8 @@ class TenderQualificationAgent:
                 should_bid=should_bid,
                 confidence_score=confidence_score,
                 similarity_score=highest_similarity,
-                meets_value_threshold=compatibility.get('meets_value_threshold', False),
-                meets_timeline_threshold=compatibility.get('meets_timeline_threshold', False),
+                meets_value_threshold=has_tender_value and compatibility.get('meets_value_threshold', False),
+                meets_timeline_threshold=has_response_date and compatibility.get('meets_timeline_threshold', False),
                 cloud_compatibility=compatibility.get('cloud_compatibility', False),
                 project_type_match=compatibility.get('project_type_match', False),
                 similar_projects=similar_matches,
@@ -230,11 +236,13 @@ class TenderQualificationAgent:
     ) -> str:
         """Generate detailed reasoning using LLM"""
         try:
-            # Prepare summary for LLM
+            # Prepare summary for LLM with safe formatting
+            value_str = f"SGD {tender_info.max_tender_value:,.0f}" if tender_info.max_tender_value else "Not specified"
+            
             tender_summary = f"""
 Company: {tender_info.company_name or 'Not specified'}
 Solution: {tender_info.solution_summary or 'Not specified'}
-Value: SGD {tender_info.max_tender_value:,.0f if tender_info.max_tender_value else 'Not specified'}
+Value: {value_str}
 Response Date: {tender_info.response_date or 'Not specified'}
 Technology Stack: {', '.join(tender_info.technology_stack) if tender_info.technology_stack else 'Not specified'}
 Cloud Platforms: {', '.join([p.value for p in tender_info.cloud_platforms]) if tender_info.cloud_platforms else 'Not specified'}
@@ -266,7 +274,14 @@ Cloud Platforms: {', '.join([p.value for p in tender_info.cloud_platforms]) if t
         """Identify potential risk factors"""
         risks = []
         
-        # Timeline risks
+        # Missing critical information risks
+        if not tender_info.response_date:
+            risks.append("Missing tender response deadline - cannot evaluate timeline adequacy")
+        
+        if not tender_info.max_tender_value:
+            risks.append("Missing tender award value - cannot evaluate financial viability")
+        
+        # Timeline risks (only if we have response date)
         if tender_info.response_date:
             days_remaining = self.date_utils.calculate_working_days(
                 self.date_utils.get_current_date_string(), tender_info.response_date
@@ -274,7 +289,7 @@ Cloud Platforms: {', '.join([p.value for p in tender_info.cloud_platforms]) if t
             if days_remaining < self.config.MIN_DAYS_TO_SUBMISSION:
                 risks.append(f"Tight timeline - only {days_remaining} working days to prepare response")
         
-        # Value risks
+        # Value risks (only if we have tender value)
         if tender_info.max_tender_value and tender_info.max_tender_value < self.config.MAX_TENDER_VALUE:
             risks.append(f"Tender value below minimum threshold (SGD {self.config.MAX_TENDER_VALUE:,})")
         
@@ -309,12 +324,14 @@ Cloud Platforms: {', '.join([p.value for p in tender_info.cloud_platforms]) if t
         if similar_matches and similar_matches[0].similarity_score > 0.8:
             success_factors.append(f"Very high similarity with successful project: {similar_matches[0].title}")
         
-        # Good timeline
-        if compatibility.get('meets_timeline_threshold', False):
+        # Good timeline - only if we have response date and it meets threshold
+        if (tender_info.response_date and 
+            compatibility.get('meets_timeline_threshold', False)):
             success_factors.append("Adequate time available for thorough response preparation")
         
-        # Good value
-        if compatibility.get('meets_value_threshold', False):
+        # Good value - only if we have tender value and it meets threshold
+        if (tender_info.max_tender_value and 
+            compatibility.get('meets_value_threshold', False)):
             success_factors.append("Tender value meets our minimum threshold")
         
         # Technology alignment

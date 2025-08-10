@@ -79,11 +79,18 @@ st.markdown("""
     }
     
     .info-box {
-        background-color: #cce7ff;
-        border: 1px solid #99d6ff;
-        border-radius: 0.375rem;
-        padding: 1rem;
+        background-color: #e3f2fd;
+        border: 1px solid #2196f3;
+        border-radius: 8px;
+        padding: 1.2rem;
         margin: 1rem 0;
+        color: #1565c0;
+        font-weight: 500;
+    }
+    
+    .info-box p {
+        margin: 0;
+        color: #1565c0;
     }
     
     .metric-card {
@@ -93,8 +100,80 @@ st.markdown("""
         margin: 0.5rem 0;
         border-left: 4px solid #1f4e79;
     }
-</style>
-""", unsafe_allow_html=True)
+    
+    .extraction-box {
+        background-color: #ffffff;
+        border: 2px solid #e3f2fd;
+        border-radius: 8px;
+        padding: 2rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        line-height: 1.6;
+    }
+    
+    .extraction-box h3 {
+        color: #1565c0;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+        font-size: 1.3rem;
+        font-weight: 600;
+        border-bottom: 2px solid #bbdefb;
+        padding-bottom: 0.5rem;
+        background-color: #f3f9ff;
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        margin-left: -1rem;
+        margin-right: -1rem;
+    }
+    
+    .extraction-box h3:first-child {
+        margin-top: 0;
+    }
+    
+    .extraction-box p {
+        color: #2c3e50;
+        margin: 0.8rem 0;
+        font-size: 1.05rem;
+        line-height: 1.7;
+    }
+    
+    .extraction-box strong {
+        color: #1976d2;
+        font-weight: 600;
+    }
+    
+    .extraction-box ul {
+        margin: 0.5rem 0;
+        padding-left: 1.5rem;
+    }
+    
+    .extraction-box li {
+        margin: 0.5rem 0;
+        line-height: 1.6;
+        color: #34495e;
+    }
+    
+    .highlight-value {
+        background-color: #e8f5e8;
+        color: #2e7d32;
+        padding: 0.3rem 0.6rem;
+        border-radius: 4px;
+        font-weight: 500;
+        border: 1px solid #c8e6c9;
+    }
+    
+    .key-info {
+        background-color: #fff3e0;
+        border-left: 4px solid #ff9800;
+        padding: 0.5rem 1rem;
+        margin: 0.5rem 0;
+        border-radius: 0 4px 4px 0;
+    }
+    
+    .key-info strong {
+        color: #e65100;
+    }
+</style>""", unsafe_allow_html=True)
 
 @st.cache_resource
 def initialize_agent():
@@ -201,8 +280,145 @@ def upload_and_validate_file():
     
     return None, None
 
+def format_extraction_for_display(raw_extraction: str) -> str:
+    """Format the raw extraction text for better display in Streamlit"""
+    
+    # Split into lines and process each section
+    lines = raw_extraction.split('\n')
+    formatted_lines = []
+    
+    # Start with the extraction box div
+    formatted_lines.append('<div class="extraction-box">')
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Main section headers (numbered items)
+        if line.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', '10.', '11.', '12.')):
+            # Remove the number and format as header
+            header_text = line.split('.', 1)[1].strip() if '.' in line else line
+            formatted_lines.append(f"<h3>🔹 {header_text}</h3>")
+            
+        # Sub-items with details (indented with dashes)
+        elif line.startswith('   -') or line.startswith('  -'):
+            # Clean up the bullet and add proper formatting
+            clean_line = line.lstrip(' -').strip()
+            if clean_line:
+                # Check if it contains a colon (key-value pair)
+                if ':' in clean_line:
+                    key, value = clean_line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Special formatting for important information
+                    if any(important in key.lower() for important in ['contact', 'email', 'phone', 'deadline', 'value', 'company']):
+                        if value and not value.lower().startswith('not'):
+                            formatted_lines.append(f"<div class='key-info'><strong>{key}:</strong> <span class='highlight-value'>{value}</span></div>")
+                        else:
+                            formatted_lines.append(f"<div class='key-info'><strong>{key}:</strong> {value}</div>")
+                    else:
+                        if value and not value.lower().startswith('not'):
+                            formatted_lines.append(f"<p><strong>{key}:</strong> <span class='highlight-value'>{value}</span></p>")
+                        else:
+                            formatted_lines.append(f"<p><strong>{key}:</strong> <em>{value}</em></p>")
+                else:
+                    formatted_lines.append(f"<p>• {clean_line}</p>")
+                
+        # Main bullet points
+        elif line.startswith('-'):
+            clean_line = line.lstrip('- ').strip()
+            if clean_line:
+                formatted_lines.append(f"<p>• {clean_line}</p>")
+                
+        # Regular text that's not a divider
+        elif not line.startswith(('---', '===', 'Tender Summary', 'Chunk')):
+            # Check if it's a standalone important piece of information
+            if any(keyword in line.lower() for keyword in ['singapore', 'examinations', 'assessment', 'board', 'andrew', 'wong', 'moe.gov.sg']):
+                formatted_lines.append(f"<div class='key-info'><strong>{line}</strong></div>")
+            else:
+                formatted_lines.append(f"<p>{line}</p>")
+    
+    # Close the extraction box div
+    formatted_lines.append('</div>')
+    
+    return '\n'.join(formatted_lines)
+
+def display_basic_tender_info(tender_info):
+    """Display basic tender information when raw extraction is not available"""
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🏢 Basic Information")
+        st.write(f"**Company:** {tender_info.company_name or 'Not specified'}")
+        st.write(f"**Contact Person:** {tender_info.contact_person or 'Not specified'}")
+        st.write(f"**Contact Email:** {tender_info.contact_email or 'Not specified'}")
+        st.write(f"**Response Date:** {tender_info.response_date or 'Not specified'}")
+        
+        st.markdown("#### 💰 Financial Information")
+        value_str = f"SGD {tender_info.max_tender_value:,.0f}" if tender_info.max_tender_value else "Not specified"
+        st.write(f"**Max Tender Value:** {value_str}")
+        st.write(f"**EPU Level:** {tender_info.epu_level or 'Not specified'}")
+    
+    with col2:
+        st.markdown("#### 🔧 Technical Requirements")
+        
+        if tender_info.technology_stack:
+            st.write("**Technology Stack:**")
+            for tech in tender_info.technology_stack:
+                st.write(f"  • {tech}")
+        else:
+            st.write("**Technology Stack:** Not specified")
+        
+        if tender_info.cloud_platforms:
+            platforms = [p.value for p in tender_info.cloud_platforms]
+            st.write(f"**Cloud Platforms:** {', '.join(platforms)}")
+        else:
+            st.write("**Cloud Platforms:** Not specified")
+    
+    if tender_info.solution_summary:
+        st.markdown("#### 📋 Solution Summary")
+        st.write(tender_info.solution_summary)
+
 def display_analysis_results(result: TenderAnalysisResult, filename: str):
     """Display the analysis results"""
+    
+    # Display extracted tender summary
+    st.markdown('<h2 class="section-header">📄 Extracted Tender Summary</h2>', unsafe_allow_html=True)
+    
+    tender_info = result.tender_info
+    
+    # Check if we have the raw extraction text
+    raw_extraction = getattr(tender_info, 'raw_extraction', None) or getattr(tender_info, 'llm_extraction_text', None)
+    
+    if raw_extraction:
+        # Display the structured extraction from LLM
+        st.markdown("""
+        <div class="info-box">
+            <p>📋 Below is the comprehensive tender information extracted and analyzed by our AI agent from your documents:</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Process and format the raw extraction for better display
+        formatted_extraction = format_extraction_for_display(raw_extraction)
+        st.markdown(formatted_extraction, unsafe_allow_html=True)
+        
+        # Add a collapsible section for the raw text
+        with st.expander("🔍 View Raw Extraction Text", expanded=False):
+            st.text(raw_extraction)
+    else:
+        # Fallback to basic information display
+        st.markdown("""
+        <div class="info-box">
+            <p>Key information extracted from your tender documents:</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        display_basic_tender_info(tender_info)
+    
+    st.markdown("---")
     
     # Main recommendation
     st.markdown('<h2 class="section-header">🎯 Bidding Recommendation</h2>', unsafe_allow_html=True)
@@ -416,66 +632,102 @@ def main():
         """, unsafe_allow_html=True)
         return
     
-    # Analysis section
-    st.markdown('<h2 class="section-header">🔄 Processing Tender Documents</h2>', unsafe_allow_html=True)
+    # Initialize session state for analysis results
+    if 'analysis_result' not in st.session_state:
+        st.session_state.analysis_result = None
+    if 'analysis_filename' not in st.session_state:
+        st.session_state.analysis_filename = None
     
-    with st.spinner("Analyzing tender documents... This may take a few minutes."):
-        try:
-            # Perform analysis
-            result = agent.analyze_tender(zip_file_path)
-            
-            # Display results
-            display_analysis_results(result, filename)
-            
-            # Download results option
-            st.markdown('<h3 class="section-header">💾 Export Results</h3>', unsafe_allow_html=True)
-            
-            # Prepare JSON export
-            export_data = {
-                "filename": filename,
-                "analysis_date": datetime.now().isoformat(),
-                "recommendation": {
-                    "should_bid": result.recommendation.should_bid,
-                    "confidence_score": result.recommendation.confidence_score,
-                    "reasoning": result.recommendation.reasoning,
-                    "criteria_met": {
-                        "similarity_threshold": result.recommendation.similarity_score >= 0.7,
-                        "value_threshold": result.recommendation.meets_value_threshold,
-                        "timeline_threshold": result.recommendation.meets_timeline_threshold,
-                        "cloud_compatibility": result.recommendation.cloud_compatibility,
-                        "project_type_match": result.recommendation.project_type_match
-                    }
-                },
-                "tender_info": {
-                    "company_name": result.tender_info.company_name,
-                    "max_tender_value": result.tender_info.max_tender_value,
-                    "response_date": result.tender_info.response_date.isoformat() if result.tender_info.response_date else None,
-                    "technology_stack": result.tender_info.technology_stack,
-                    "solution_summary": result.tender_info.solution_summary
-                },
-                "missing_information": result.recommendation.missing_information,
-                "sales_recommendations": result.recommendation.sales_recommendations
-            }
-            
-            json_data = json.dumps(export_data, indent=2, default=str)
-            
-            st.download_button(
-                label="📄 Download Analysis Report (JSON)",
-                data=json_data,
-                file_name=f"tender_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json"
-            )
-            
-        except Exception as e:
-            st.error(f"❌ Error during analysis: {str(e)}")
-            logger.error(f"Analysis error: {str(e)}", exc_info=True)
+    # Check if we need to run analysis (new file or no previous result)
+    should_analyze = (
+        st.session_state.analysis_result is None or 
+        st.session_state.analysis_filename != filename
+    )
+    
+    if should_analyze:
+        # Analysis section
+        st.markdown('<h2 class="section-header">🔄 Processing Tender Documents</h2>', unsafe_allow_html=True)
         
-        finally:
-            # Clean up temporary file
+        with st.spinner("Analyzing tender documents... This may take a few minutes."):
             try:
-                os.unlink(zip_file_path)
-            except:
-                pass
+                # Perform analysis
+                result = agent.analyze_tender(zip_file_path)
+                
+                # Store results in session state
+                st.session_state.analysis_result = result
+                st.session_state.analysis_filename = filename
+                
+            except Exception as e:
+                st.error(f"❌ Error during analysis: {str(e)}")
+                logger.error(f"Analysis error: {str(e)}", exc_info=True)
+                return
+            
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(zip_file_path)
+                except:
+                    pass
+    else:
+        # Use cached results - no need to clean up file since it's already done
+        result = st.session_state.analysis_result
+        # Clean up the new temporary file since we're using cached results
+        try:
+            os.unlink(zip_file_path)
+        except:
+            pass
+    
+    # Display results (whether new or cached)
+    if result:
+        display_analysis_results(result, filename)
+        
+        # Download results option
+        st.markdown('<h3 class="section-header">💾 Export Results</h3>', unsafe_allow_html=True)
+        
+        # Prepare JSON export
+        export_data = {
+            "filename": filename,
+            "analysis_date": datetime.now().isoformat(),
+            "recommendation": {
+                "should_bid": result.recommendation.should_bid,
+                "confidence_score": result.recommendation.confidence_score,
+                "reasoning": result.recommendation.reasoning,
+                "criteria_met": {
+                    "similarity_threshold": result.recommendation.similarity_score >= 0.7,
+                    "value_threshold": result.recommendation.meets_value_threshold,
+                    "timeline_threshold": result.recommendation.meets_timeline_threshold,
+                    "cloud_compatibility": result.recommendation.cloud_compatibility,
+                    "project_type_match": result.recommendation.project_type_match
+                }
+            },
+            "tender_info": {
+                "company_name": result.tender_info.company_name,
+                "max_tender_value": result.tender_info.max_tender_value,
+                "response_date": result.tender_info.response_date.isoformat() if result.tender_info.response_date else None,
+                "technology_stack": result.tender_info.technology_stack,
+                "solution_summary": result.tender_info.solution_summary
+            },
+            "missing_information": result.recommendation.missing_information,
+            "sales_recommendations": result.recommendation.sales_recommendations,
+            "raw_extracted_texts": result.tender_info.raw_documents,
+            "processing_details": {
+                "processing_time": result.processing_time,
+                "processed_files": result.processed_files,
+                "extraction_confidence": result.tender_info.extraction_confidence,
+                "errors": result.errors
+            }
+        }
+        
+        json_data = json.dumps(export_data, indent=2, default=str)
+        
+        st.download_button(
+            label="📄 Download Analysis Report (JSON)",
+            data=json_data,
+            file_name=f"tender_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json",
+            key="download_analysis_report"  # Add unique key to prevent re-runs
+        )
+
 
 if __name__ == "__main__":
     main()

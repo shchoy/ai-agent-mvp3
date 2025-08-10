@@ -151,7 +151,7 @@ class TestTenderQualificationAgent(unittest.TestCase):
         self.assertTrue(os.path.exists(extraction_dir))
         
         # Test document file discovery
-        doc_files = file_handler.get_document_files(extraction_dir)
+        doc_files = file_handler.find_document_files(extraction_dir)
         self.assertGreater(len(doc_files), 0)
         
         # Test text extraction

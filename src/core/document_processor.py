@@ -89,7 +89,7 @@ class DocumentProcessor:
             # Try to extract and validate contents
             try:
                 extraction_dir = self.file_handler.extract_zip_file(zip_path)
-                document_files = self.file_handler.get_document_files(extraction_dir)
+                document_files = self.file_handler.find_document_files(extraction_dir)
                 
                 if not document_files:
                     validation_errors.append("No supported document files found in ZIP")

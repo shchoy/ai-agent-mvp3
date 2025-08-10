@@ -36,24 +36,21 @@ class InformationExtractor:
             
             # Combine all documents for analysis
             combined_text = self._combine_documents(documents)
-            
-            # Use LLM for initial extraction
+
+            # Use LLM for extraction - this is our primary data source
             llm_extraction = self.llm_service.extract_tender_information(documents)
             
-            # Parse and structure the extraction
+            # Parse and structure the extraction, keeping raw LLM output as primary data
             structured_data = self._parse_llm_extraction(llm_extraction, combined_text)
             
-            # Apply rule-based extraction for specific fields
-            rule_based_data = self._apply_rule_based_extraction(combined_text)
+            # Process and validate the data before creating TenderInformation object
+            processed_data = self._process_and_validate_data(structured_data)
             
-            # Merge LLM and rule-based results
-            final_data = self._merge_extraction_results(structured_data, rule_based_data)
-            
-            # Create TenderInformation object
+            # Create TenderInformation object with comprehensive extraction
             tender_info = TenderInformation(
-                **final_data,
+                **processed_data,
                 raw_documents=documents,
-                extraction_confidence=self._calculate_confidence(final_data)
+                extraction_confidence=self._calculate_confidence(processed_data)
             )
             
             logger.info("Successfully extracted tender information")
@@ -61,10 +58,14 @@ class InformationExtractor:
             
         except Exception as e:
             logger.error(f"Error extracting tender information: {str(e)}")
-            # Return empty tender info with error
+            # Return empty tender info with error, ensuring all list fields are properly initialized
             return TenderInformation(
                 raw_documents=documents,
-                extraction_confidence=0.0
+                extraction_confidence=0.0,
+                it_certifications=[],
+                technology_stack=[],
+                cloud_platforms=[],
+                project_types=[]
             )
     
     def _combine_documents(self, documents: Dict[str, str]) -> str:
@@ -76,12 +77,228 @@ class InformationExtractor:
     
     def _parse_llm_extraction(self, llm_result: str, combined_text: str) -> Dict[str, Any]:
         """Parse the LLM extraction result into structured data"""
-        parsed_data = {}
+        # Use the LLM service's comprehensive parsing function
+        # This will provide full structured extraction while preserving the raw LLM output
+        parsed_data = self.llm_service.parse_extraction_result(llm_result)
         
-        # Basic parsing of LLM result
-        parsed_data.update(self.llm_service.parse_extraction_result(llm_result))
+        # ENSURE llm_extraction_text is always captured from the raw LLM result
+        if 'llm_extraction_text' not in parsed_data or not parsed_data['llm_extraction_text']:
+            parsed_data['llm_extraction_text'] = llm_result[:1000] if llm_result else ""
+            logger.info(f"Manually added llm_extraction_text: {len(parsed_data['llm_extraction_text'])} characters")
         
-        return parsed_data
+        # Also ensure raw_extraction is captured
+        if 'raw_extraction' not in parsed_data:
+            parsed_data['raw_extraction'] = llm_result
+        
+        # Debug: Log the LLM extraction text length to verify it's being captured
+        llm_text = parsed_data.get('llm_extraction_text', '')
+        logger.info(f"LLM extraction text captured: {len(llm_text)} characters")
+        
+        # Also apply rule-based extraction to fill in any gaps
+        rule_data = self._apply_rule_based_extraction(combined_text)
+        
+        # Merge the results, preferring LLM extraction when available
+        merged_data = self._merge_extraction_results(parsed_data, rule_data)
+        
+        # Debug: Verify the merged data still contains the LLM extraction text
+        final_llm_text = merged_data.get('llm_extraction_text', '')
+        logger.info(f"Final merged LLM extraction text: {len(final_llm_text)} characters")
+        
+        return merged_data
+    
+    def _process_and_validate_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process and validate extracted data, handling type conversions and validation"""
+        from datetime import datetime, date
+        
+        processed_data = data.copy()
+        
+        # Convert and validate date fields
+        for date_field in ['publish_date', 'response_date']:
+            if date_field in processed_data and processed_data[date_field]:
+                date_value = processed_data[date_field]
+                if isinstance(date_value, str):
+                    # Try to parse the date string
+                    parsed_date = self._parse_date_safely(date_value)
+                    processed_data[date_field] = parsed_date
+                    if parsed_date:
+                        logger.info(f"Successfully parsed {date_field}: {date_value} -> {parsed_date}")
+                    else:
+                        logger.warning(f"Failed to parse {date_field}: '{date_value}' - setting to None")
+                elif not isinstance(date_value, date):
+                    # If it's not a string or date object, set to None
+                    processed_data[date_field] = None
+                    logger.warning(f"Invalid {date_field} type: {type(date_value)} - setting to None")
+        
+        # Convert and validate max_tender_value
+        if 'max_tender_value' in processed_data and processed_data['max_tender_value']:
+            value = processed_data['max_tender_value']
+            if isinstance(value, str):
+                try:
+                    # Remove currency symbols, commas, and extra text
+                    import re
+                    # Extract numbers from the string
+                    clean_value = re.sub(r'[^\d.,]', '', value)
+                    clean_value = clean_value.replace(',', '')
+                    if clean_value:
+                        processed_data['max_tender_value'] = float(clean_value)
+                        logger.info(f"Converted max_tender_value: {value} -> {processed_data['max_tender_value']}")
+                    else:
+                        processed_data['max_tender_value'] = None
+                        logger.warning(f"Could not extract number from max_tender_value: '{value}'")
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"Could not convert max_tender_value '{value}': {str(e)}")
+                    processed_data['max_tender_value'] = None
+            elif not isinstance(value, (int, float)):
+                processed_data['max_tender_value'] = None
+                logger.warning(f"Invalid max_tender_value type: {type(value)}")
+        
+        # Ensure list fields are properly formatted
+        list_fields = ['it_certifications', 'technology_stack', 'cloud_platforms', 'project_types']
+        for field in list_fields:
+            if field in processed_data:
+                if processed_data[field] is None:
+                    processed_data[field] = []
+                elif isinstance(processed_data[field], str):
+                    # Convert comma-separated string to list
+                    if processed_data[field].strip():
+                        processed_data[field] = [item.strip() for item in processed_data[field].split(',') if item.strip()]
+                    else:
+                        processed_data[field] = []
+                elif not isinstance(processed_data[field], list):
+                    processed_data[field] = [processed_data[field]] if processed_data[field] else []
+        
+        # Ensure managed_services is a boolean or None
+        if 'managed_services' in processed_data and processed_data['managed_services']:
+            if isinstance(processed_data['managed_services'], str):
+                value_lower = processed_data['managed_services'].lower()
+                processed_data['managed_services'] = value_lower in ['true', 'yes', '1', 'required', 'needed']
+            elif not isinstance(processed_data['managed_services'], bool):
+                processed_data['managed_services'] = None
+        
+        # Ensure string fields are proper strings or None
+        string_fields = ['company_name', 'contact_person', 'contact_email', 'contact_phone', 
+                        'epu_level', 'pricing_schedule', 'solution_summary', 'business_purpose', 
+                        'scope_of_work', 'sla_requirements', 'project_duration', 
+                        'llm_extraction_text', 'raw_extraction']
+        
+        for field in string_fields:
+            if field in processed_data and processed_data[field] is not None:
+                if not isinstance(processed_data[field], str):
+                    processed_data[field] = str(processed_data[field])
+                elif processed_data[field].strip() == "":
+                    processed_data[field] = None
+        
+        logger.info(f"Data processing complete: {len(processed_data)} fields processed")
+        return processed_data
+    
+    def _parse_date_safely(self, date_str: str) -> Optional[date]:
+        """Safely parse a date string using multiple formats"""
+        if not date_str or not isinstance(date_str, str):
+            return None
+        
+        # Clean the date string
+        date_str = date_str.strip()
+        
+        # Skip obviously invalid date strings
+        if len(date_str) < 6 or date_str.lower() in ['not available', 'n/a', 'none', 'null']:
+            return None
+        
+        # Try multiple date formats
+        date_formats = [
+            '%Y-%m-%d',           # 2024-12-31
+            '%d/%m/%Y',           # 31/12/2024
+            '%d-%m-%Y',           # 31-12-2024
+            '%m/%d/%Y',           # 12/31/2024
+            '%B %d, %Y',          # December 31, 2024
+            '%d %B %Y',           # 31 December 2024
+            '%b %d, %Y',          # Dec 31, 2024
+            '%d %b %Y',           # 31 Dec 2024
+            '%Y/%m/%d',           # 2024/12/31
+            '%d.%m.%Y',           # 31.12.2024
+        ]
+        
+        for fmt in date_formats:
+            try:
+                parsed_date = datetime.strptime(date_str, fmt).date()
+                return parsed_date
+            except ValueError:
+                continue
+        
+        # Try using the date_utils if available
+        try:
+            return self.date_utils.parse_date_from_text(date_str)
+        except:
+            pass
+        
+        logger.warning(f"Could not parse date string: '{date_str}'")
+        return None
+
+    def _extract_critical_fields_only(self, llm_result: str) -> Dict[str, Any]:
+        """Extract only critical fields needed for business logic validation"""
+        critical_data = {
+            'response_date': None,
+            'max_tender_value': None,
+        }
+        
+        lines = llm_result.split('\n')
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Only extract response deadline for timeline validation
+            if "response deadline" in line.lower() or "deadline:" in line.lower():
+                for j in range(i, min(i+3, len(lines))):
+                    check_line = lines[j]
+                    if "deadline:" in check_line.lower():
+                        date_part = check_line.split(":")[-1].strip()
+                        if date_part and not date_part.lower().startswith('not'):
+                            critical_data["response_date"] = date_part
+                            break
+            
+            # Only extract tender value for financial validation
+            elif "maximum tender" in line.lower() or "tender award value" in line.lower():
+                for j in range(i, min(i+3, len(lines))):
+                    check_line = lines[j]
+                    if "$" in check_line or "sgd" in check_line.lower():
+                        # Extract monetary value
+                        import re
+                        money_match = re.search(r'[\$]?[\d,]+(?:\.\d{2})?', check_line)
+                        if money_match:
+                            value_str = money_match.group().replace('$', '').replace(',', '')
+                            try:
+                                critical_data["max_tender_value"] = float(value_str)
+                            except:
+                                pass
+                        break
+        
+        return critical_data
+    
+    def _calculate_llm_confidence(self, llm_extraction: str) -> float:
+        """Calculate confidence score based on LLM extraction completeness"""
+        if not llm_extraction or len(llm_extraction.strip()) < 50:
+            return 0.0
+        
+        # Simple heuristic based on extraction length and structure
+        lines = [line.strip() for line in llm_extraction.split('\n') if line.strip()]
+        
+        # Look for key indicators of complete extraction
+        key_indicators = [
+            'solution summary', 'business purpose', 'scope of work',
+            'technology', 'deadline', 'value', 'company'
+        ]
+        
+        found_indicators = 0
+        for indicator in key_indicators:
+            if any(indicator.lower() in line.lower() for line in lines):
+                found_indicators += 1
+        
+        # Base confidence on number of key fields found and text length
+        base_confidence = found_indicators / len(key_indicators)
+        length_factor = min(1.0, len(llm_extraction) / 1000)  # Scale based on content length
+        
+        return min(0.95, base_confidence * 0.7 + length_factor * 0.3)
     
     def _apply_rule_based_extraction(self, text: str) -> Dict[str, Any]:
         """Apply rule-based extraction for specific fields"""
@@ -410,6 +627,17 @@ class InformationExtractor:
         """Merge LLM and rule-based extraction results"""
         merged = {}
         
+        # Define default values for list fields to prevent None values
+        list_field_defaults = {
+            'it_certifications': [],
+            'technology_stack': [],
+            'cloud_platforms': [],
+            'project_types': []
+        }
+        
+        # Always preserve these fields from LLM data (they don't exist in rule-based extraction)
+        llm_only_fields = {'llm_extraction_text', 'raw_extraction'}
+        
         # Combine both dictionaries, preferring rule-based results when available
         all_keys = set(llm_data.keys()) | set(rule_data.keys())
         
@@ -417,8 +645,11 @@ class InformationExtractor:
             rule_value = rule_data.get(key)
             llm_value = llm_data.get(key)
             
+            # Always preserve LLM-only fields from LLM data
+            if key in llm_only_fields:
+                merged[key] = llm_value
             # Prefer rule-based extraction when available and valid
-            if rule_value is not None and rule_value != "":
+            elif rule_value is not None and rule_value != "":
                 if isinstance(rule_value, list) and len(rule_value) > 0:
                     merged[key] = rule_value
                 elif not isinstance(rule_value, list):
@@ -427,6 +658,10 @@ class InformationExtractor:
                     merged[key] = llm_value
             else:
                 merged[key] = llm_value
+            
+            # Ensure list fields are never None
+            if key in list_field_defaults and (merged[key] is None or merged[key] == ""):
+                merged[key] = list_field_defaults[key]
         
         return merged
     
