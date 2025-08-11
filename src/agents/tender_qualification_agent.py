@@ -283,11 +283,23 @@ Cloud Platforms: {', '.join([p.value for p in tender_info.cloud_platforms]) if t
         
         # Timeline risks (only if we have response date)
         if tender_info.response_date:
-            days_remaining = self.date_utils.calculate_working_days(
-                self.date_utils.get_current_date_string(), tender_info.response_date
-            )
-            if days_remaining < self.config.MIN_DAYS_TO_SUBMISSION:
-                risks.append(f"Tight timeline - only {days_remaining} working days to prepare response")
+            try:
+                # Ensure we're working with a date object
+                response_date = tender_info.response_date
+                if isinstance(response_date, str):
+                    from datetime import datetime
+                    response_date = datetime.strptime(response_date, '%Y-%m-%d').date()
+                
+                # Calculate days remaining safely
+                days_remaining = self.date_utils.calculate_working_days(
+                    datetime.now().date(), response_date
+                )
+                
+                if days_remaining < self.config.MIN_DAYS_TO_SUBMISSION:
+                    risks.append(f"Tight timeline - only {days_remaining} working days to prepare response")
+            except Exception as e:
+                logger.warning(f"Error calculating timeline: {str(e)}")
+                risks.append("Unable to evaluate timeline due to date format issue")
         
         # Value risks (only if we have tender value)
         if tender_info.max_tender_value and tender_info.max_tender_value < self.config.MAX_TENDER_VALUE:

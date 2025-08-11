@@ -66,7 +66,7 @@ class SimilarityMatcher:
     
     def _create_search_query(self, tender_info: TenderInformation) -> str:
         """
-        Create search query text from tender information using raw LLM extraction
+        Create search query text from tender information using LLM extraction summary
         
         Args:
             tender_info: Tender information object
@@ -74,11 +74,18 @@ class SimilarityMatcher:
         Returns:
             Search query string
         """
-        # Use the raw LLM extraction text which contains all the structured information
+        # Prioritize the LLM extraction text as it contains the most comprehensive summary
         if hasattr(tender_info, 'llm_extraction_text') and tender_info.llm_extraction_text:
+            logger.info(f"Using LLM extraction text for search query ({len(tender_info.llm_extraction_text)} chars)")
             return tender_info.llm_extraction_text
         
-        # Fallback to building query from individual fields if no raw extraction available
+        # Secondary fallback to raw_extraction if available
+        if hasattr(tender_info, 'raw_extraction') and tender_info.raw_extraction:
+            logger.info(f"Using raw extraction for search query ({len(tender_info.raw_extraction)} chars)")
+            return tender_info.raw_extraction
+        
+        # Final fallback to building query from individual fields
+        logger.warning("No LLM extraction available, building query from structured fields")
         query_parts = []
         
         # Add solution summary
@@ -311,7 +318,7 @@ class SimilarityMatcher:
     
     def get_compatibility_score(self, tender_info: TenderInformation) -> Dict[str, bool]:
         """
-        Check compatibility with business criteria
+        Check compatibility with business criteria using LLM extraction summary
         
         Args:
             tender_info: Tender information
@@ -321,16 +328,24 @@ class SimilarityMatcher:
         """
         compatibility = {}
         
-        # Check cloud platform compatibility
+        # Use LLM extraction text for enhanced criteria analysis
+        llm_extraction = getattr(tender_info, 'llm_extraction_text', '') or ''
+        
+        # Check cloud platform compatibility using both structured data and LLM extraction
         supported_platforms = {CloudPlatform.AWS, CloudPlatform.AZURE}
         tender_platforms = set(tender_info.cloud_platforms) if tender_info.cloud_platforms else set()
         
+        # Enhanced cloud compatibility check using LLM extraction
+        cloud_mentioned_in_llm = self._check_cloud_platforms_in_text(llm_extraction)
+        
         compatibility['cloud_compatibility'] = (
-            not tender_platforms or  # No specific requirement
-            bool(tender_platforms & supported_platforms)  # Has compatible platform
+            not tender_platforms or  # No specific requirement in structured data
+            bool(tender_platforms & supported_platforms) or  # Has compatible platform in structured data
+            not cloud_mentioned_in_llm or  # No cloud requirement mentioned in LLM extraction
+            self._has_supported_cloud_in_text(llm_extraction)  # LLM extraction mentions supported platforms
         )
         
-        # Check project type alignment
+        # Check project type alignment using both structured data and LLM extraction
         target_types = {
             ProjectType.CLOUD_MIGRATION,
             ProjectType.DATA_PLATFORM,
@@ -340,9 +355,11 @@ class SimilarityMatcher:
         }
         tender_types = set(tender_info.project_types) if tender_info.project_types else set()
         
+        # Enhanced project type matching using LLM extraction
         compatibility['project_type_match'] = (
-            not tender_types or  # No specific requirement
-            bool(tender_types & target_types)  # Has target project type
+            not tender_types or  # No specific requirement in structured data
+            bool(tender_types & target_types) or  # Has target project type in structured data
+            self._has_compatible_project_type_in_text(llm_extraction)  # LLM extraction indicates compatible project
         )
         
         # Check tender value threshold
@@ -353,9 +370,52 @@ class SimilarityMatcher:
         
         # Check timeline adequacy
         from utils.date_utils import DateUtils
+        date_utils = DateUtils()
         compatibility['meets_timeline_threshold'] = (
             tender_info.response_date is None or
-            DateUtils.is_sufficient_time(tender_info.response_date, self.config.MIN_DAYS_TO_SUBMISSION)
+            date_utils.is_sufficient_time(tender_info.response_date, self.config.MIN_DAYS_TO_SUBMISSION)
         )
         
+        logger.info(f"Compatibility analysis using LLM extraction ({len(llm_extraction)} chars): "
+                   f"cloud={compatibility['cloud_compatibility']}, "
+                   f"project_type={compatibility['project_type_match']}, "
+                   f"value={compatibility['meets_value_threshold']}, "
+                   f"timeline={compatibility['meets_timeline_threshold']}")
+        
         return compatibility
+    
+    def _check_cloud_platforms_in_text(self, text: str) -> bool:
+        """Check if cloud platforms are mentioned in the LLM extraction text"""
+        if not text:
+            return False
+        
+        text_lower = text.lower()
+        cloud_keywords = ['aws', 'azure', 'gcp', 'google cloud', 'amazon web services', 
+                         'microsoft azure', 'cloud platform', 'cloud infrastructure']
+        
+        return any(keyword in text_lower for keyword in cloud_keywords)
+    
+    def _has_supported_cloud_in_text(self, text: str) -> bool:
+        """Check if supported cloud platforms (AWS/Azure) are mentioned in LLM extraction"""
+        if not text:
+            return True  # Assume compatible if no specific mention
+        
+        text_lower = text.lower()
+        supported_keywords = ['aws', 'azure', 'amazon web services', 'microsoft azure']
+        
+        return any(keyword in text_lower for keyword in supported_keywords)
+    
+    def _has_compatible_project_type_in_text(self, text: str) -> bool:
+        """Check if compatible project types are mentioned in LLM extraction"""
+        if not text:
+            return True  # Assume compatible if no specific mention
+        
+        text_lower = text.lower()
+        compatible_keywords = [
+            'cloud migration', 'data platform', 'big data', 'serverless',
+            'ai agent', 'artificial intelligence', 'machine learning',
+            'data analytics', 'data engineering', 'microservices',
+            'api development', 'web application', 'software development'
+        ]
+        
+        return any(keyword in text_lower for keyword in compatible_keywords)
