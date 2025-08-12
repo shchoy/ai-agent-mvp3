@@ -66,6 +66,58 @@ class DateUtils:
         return None
     
     @staticmethod
+    def parse_date_safely(date_str: str) -> Optional[date]:
+        """
+        Safely parse a date string using multiple formats with enhanced validation
+        
+        Args:
+            date_str: Date string to parse
+            
+        Returns:
+            Parsed date or None if parsing fails
+        """
+        if not date_str or not isinstance(date_str, str):
+            return None
+        
+        # Clean the date string
+        date_str = date_str.strip()
+        
+        # Skip obviously invalid date strings
+        if len(date_str) < 6 or date_str.lower() in ['not available', 'n/a', 'none', 'null']:
+            return None
+        
+        # Try multiple date formats
+        date_formats = [
+            '%Y-%m-%d',           # 2024-12-31
+            '%d/%m/%Y',           # 31/12/2024
+            '%d-%m-%Y',           # 31-12-2024
+            '%m/%d/%Y',           # 12/31/2024
+            '%B %d, %Y',          # December 31, 2024
+            '%d %B %Y',           # 31 December 2024
+            '%b %d, %Y',          # Dec 31, 2024
+            '%d %b %Y',           # 31 Dec 2024
+            '%Y/%m/%d',           # 2024/12/31
+            '%d.%m.%Y',           # 31.12.2024
+        ]
+        
+        # Try each format
+        for fmt in date_formats:
+            try:
+                parsed_date = datetime.strptime(date_str, fmt).date()
+                return parsed_date
+            except ValueError:
+                continue
+        
+        # Fallback to the existing parse_date_from_text method
+        try:
+            return DateUtils.parse_date_from_text(date_str)
+        except Exception:
+            pass
+        
+        logger.warning(f"Could not parse date string: '{date_str}'")
+        return None
+    
+    @staticmethod
     def calculate_working_days(start_date: date, end_date: date) -> int:
         """
         Calculate working days between two dates (excluding weekends)

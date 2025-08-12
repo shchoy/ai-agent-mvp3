@@ -18,15 +18,24 @@ logger = logging.getLogger(__name__)
 # Add src to path
 import sys
 import os
-current_dir = os.path.dirname(os.path.abspath(__file__))
-src_path = os.path.join(current_dir, '..', 'src')
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
+# current_dir = os.path.dirname(os.path.abspath(__file__))
+# src_path = os.path.join(current_dir, '..', 'src')
+# if src_path not in sys.path:
+#     sys.path.insert(0, src_path)
+
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 try:
-    from agents.tender_qualification_agent import TenderQualificationAgent
-    from models.tender_models import TenderAnalysisResult
-    from utils.config import Config
+    # from agents.tender_qualification_agent import TenderQualificationAgent
+    # from models.tender_models import TenderAnalysisResult
+    # from utils.config import Config
+
+    from src.agents.tender_qualification_agent import TenderQualificationAgent
+    from src.models.tender_models import TenderAnalysisResult
+    from src.utils.config import Config
+
 except ImportError as e:
     st.error(f"Import error: {e}")
     st.error("Please ensure you're running the app from the MVP3 directory")

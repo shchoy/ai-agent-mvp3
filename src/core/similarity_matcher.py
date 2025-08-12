@@ -66,64 +66,218 @@ class SimilarityMatcher:
     
     def _create_search_query(self, tender_info: TenderInformation) -> str:
         """
-        Create search query text from tender information using LLM extraction summary
+        Create comprehensive search query using both structured fields and LLM extraction for optimal Pinecone search
         
         Args:
             tender_info: Tender information object
             
         Returns:
-            Search query string
+            Search query string optimized for vector similarity search
         """
-        # Prioritize the LLM extraction text as it contains the most comprehensive summary
+        query_components = []
+        
+        # 1. Start with LLM extraction text as the primary semantic content
         if hasattr(tender_info, 'llm_extraction_text') and tender_info.llm_extraction_text:
-            logger.info(f"Using LLM extraction text for search query ({len(tender_info.llm_extraction_text)} chars)")
-            return tender_info.llm_extraction_text
+            # Clean and prioritize technical content from LLM extraction
+            cleaned_extraction = self._extract_technical_content(tender_info.llm_extraction_text)
+            if cleaned_extraction:
+                query_components.append(f"Technical Requirements: {cleaned_extraction}")
+                logger.info(f"Using LLM extraction text for search query ({len(cleaned_extraction)} chars)")
         
-        # Secondary fallback to raw_extraction if available
-        if hasattr(tender_info, 'raw_extraction') and tender_info.raw_extraction:
-            logger.info(f"Using raw extraction for search query ({len(tender_info.raw_extraction)} chars)")
-            return tender_info.raw_extraction
-        
-        # Final fallback to building query from individual fields
-        logger.warning("No LLM extraction available, building query from structured fields")
-        query_parts = []
-        
-        # Add solution summary
+        # 2. Add structured solution and business context
+        solution_context = []
         if tender_info.solution_summary:
-            query_parts.append(f"Solution: {tender_info.solution_summary}")
+            solution_context.append(f"Solution: {tender_info.solution_summary}")
         
-        # Add business purpose
         if tender_info.business_purpose:
-            query_parts.append(f"Purpose: {tender_info.business_purpose}")
+            solution_context.append(f"Purpose: {tender_info.business_purpose}")
         
-        # Add scope of work
         if tender_info.scope_of_work:
-            query_parts.append(f"Scope: {tender_info.scope_of_work}")
+            solution_context.append(f"Scope: {tender_info.scope_of_work}")
         
-        # Add technology stack
+        if solution_context:
+            query_components.append(" | ".join(solution_context))
+        
+        # 3. Add technology and platform requirements (important for matching)
+        tech_requirements = []
+        
         if tender_info.technology_stack:
             tech_stack = ", ".join(tender_info.technology_stack)
-            query_parts.append(f"Technologies: {tech_stack}")
+            tech_requirements.append(f"Technologies: {tech_stack}")
         
-        # Add cloud platforms
         if tender_info.cloud_platforms:
             platforms = ", ".join([platform.value for platform in tender_info.cloud_platforms])
-            query_parts.append(f"Cloud platforms: {platforms}")
+            tech_requirements.append(f"Cloud Platforms: {platforms}")
         
-        # Add project types
         if tender_info.project_types:
             project_types = ", ".join([pt.value for pt in tender_info.project_types])
-            query_parts.append(f"Project types: {project_types}")
+            tech_requirements.append(f"Project Types: {project_types}")
         
-        # Add managed services info
+        if tech_requirements:
+            query_components.append(" | ".join(tech_requirements))
+        
+        # 4. Add service and operational requirements
+        service_requirements = []
+        
         if tender_info.managed_services:
-            query_parts.append("Managed services required")
+            service_requirements.append("Managed Services Required")
         
-        # Add project duration
+        if tender_info.sla_requirements:
+            service_requirements.append(f"SLA: {tender_info.sla_requirements}")
+        
         if tender_info.project_duration:
-            query_parts.append(f"Duration: {tender_info.project_duration}")
+            service_requirements.append(f"Duration: {tender_info.project_duration}")
         
-        return " | ".join(query_parts)
+        if tender_info.it_certifications:
+            certifications = ", ".join([cert.value for cert in tender_info.it_certifications])
+            service_requirements.append(f"Certifications: {certifications}")
+        
+        if service_requirements:
+            query_components.append(" | ".join(service_requirements))
+        
+        # 5. Add financial context if available (helps with project scale matching)
+        if tender_info.max_tender_value:
+            # Categorize tender value for better matching
+            value = tender_info.max_tender_value
+            if value >= 1000000:
+                scale = "Large Scale Enterprise Project"
+            elif value >= 500000:
+                scale = "Medium Scale Project"
+            elif value >= 100000:
+                scale = "Small to Medium Project"
+            else:
+                scale = "Small Scale Project"
+            query_components.append(f"Project Scale: {scale} (SGD {value:,.0f})")
+        
+        # 6. Combine all components with appropriate weighting
+        if query_components:
+            # Join components with delimiters that help semantic search
+            final_query = "\n\n".join(query_components)
+            
+            # Add some semantic enhancement keywords for better vector matching
+            enhancement_keywords = self._generate_semantic_keywords(tender_info)
+            if enhancement_keywords:
+                final_query += f"\n\nKey Concepts: {enhancement_keywords}"
+            
+            logger.info(f"Generated comprehensive search query with {len(query_components)} components ({len(final_query)} chars)")
+            return final_query
+        
+        # Fallback if no components found
+        logger.warning("No meaningful query components found, using basic fallback")
+        return "IT services tender project requirements"
+    
+    def _extract_technical_content(self, llm_extraction: str) -> str:
+        """
+        Extract and clean technical content from LLM extraction for search
+        
+        Args:
+            llm_extraction: Raw LLM extraction text
+            
+        Returns:
+            Cleaned technical content suitable for vector search
+        """
+        if not llm_extraction:
+            return ""
+        
+        # Split into lines and filter for technical content
+        lines = llm_extraction.split('\n')
+        technical_lines = []
+        skip_administrative = False
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            line_lower = line.lower()
+            
+            # Skip administrative sections that don't help with technical matching
+            if any(admin_term in line_lower for admin_term in [
+                'company or agency releasing',
+                'contact person',
+                'contact email',
+                'contact phone',
+                'publish date',
+                'response deadline',
+                'epu level'
+            ]):
+                skip_administrative = True
+                continue
+            
+            # Include technical sections
+            if any(tech_term in line_lower for tech_term in [
+                'solution', 'technology', 'technical', 'platform', 'infrastructure',
+                'requirements', 'scope', 'deliverables', 'implementation',
+                'architecture', 'system', 'software', 'hardware', 'cloud',
+                'data', 'security', 'performance', 'integration', 'api',
+                'development', 'deployment', 'monitoring', 'maintenance'
+            ]):
+                skip_administrative = False
+            
+            # Include line if it's technical content
+            if not skip_administrative and len(line) > 10:
+                technical_lines.append(line)
+        
+        # Join technical content and limit length for optimal vector search
+        technical_content = ' '.join(technical_lines)
+        
+        # Limit to optimal length for vector search (typically 1000-2000 chars work well)
+        if len(technical_content) > 1500:
+            technical_content = technical_content[:1500] + "..."
+        
+        return technical_content
+    
+    def _generate_semantic_keywords(self, tender_info: TenderInformation) -> str:
+        """
+        Generate semantic keywords to enhance vector search matching
+        
+        Args:
+            tender_info: Tender information object
+            
+        Returns:
+            String of relevant semantic keywords
+        """
+        keywords = set()
+        
+        # Add technology-related keywords
+        if tender_info.technology_stack:
+            for tech in tender_info.technology_stack:
+                tech_lower = tech.lower()
+                if 'python' in tech_lower:
+                    keywords.update(['python', 'backend development', 'scripting', 'automation'])
+                elif 'java' in tech_lower:
+                    keywords.update(['java', 'enterprise development', 'backend services'])
+                elif 'javascript' in tech_lower or 'react' in tech_lower or 'angular' in tech_lower:
+                    keywords.update(['frontend development', 'web applications', 'user interface'])
+                elif 'docker' in tech_lower or 'kubernetes' in tech_lower:
+                    keywords.update(['containerization', 'orchestration', 'devops', 'microservices'])
+                elif 'aws' in tech_lower or 'azure' in tech_lower or 'gcp' in tech_lower:
+                    keywords.update(['cloud infrastructure', 'cloud services', 'scalable architecture'])
+        
+        # Add project type keywords
+        if tender_info.project_types:
+            for project_type in tender_info.project_types:
+                if project_type.value == 'cloud_migration':
+                    keywords.update(['cloud migration', 'infrastructure modernization', 'digital transformation'])
+                elif project_type.value == 'data_platform':
+                    keywords.update(['data engineering', 'analytics platform', 'data pipeline'])
+                elif project_type.value == 'ai_agents':
+                    keywords.update(['artificial intelligence', 'machine learning', 'intelligent automation'])
+                elif project_type.value == 'web_application':
+                    keywords.update(['web development', 'application development', 'digital solutions'])
+        
+        # Add service model keywords
+        if tender_info.managed_services:
+            keywords.update(['managed services', 'ongoing support', 'service management', 'operational support'])
+        
+        # Add scale and complexity keywords based on value
+        if tender_info.max_tender_value:
+            if tender_info.max_tender_value >= 1000000:
+                keywords.update(['enterprise grade', 'large scale', 'complex implementation'])
+            elif tender_info.max_tender_value >= 100000:
+                keywords.update(['professional services', 'medium complexity', 'business solution'])
+        
+        return ', '.join(sorted(keywords))
     
     def _filter_matches_by_criteria(
         self, 

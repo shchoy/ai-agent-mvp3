@@ -117,8 +117,8 @@ class InformationExtractor:
             if date_field in processed_data and processed_data[date_field]:
                 date_value = processed_data[date_field]
                 if isinstance(date_value, str):
-                    # Try to parse the date string
-                    parsed_date = self._parse_date_safely(date_value)
+                    # Try to parse the date string using DateUtils
+                    parsed_date = self.date_utils.parse_date_safely(date_value)
                     processed_data[date_field] = parsed_date
                     if parsed_date:
                         logger.info(f"Successfully parsed {date_field}: {date_value} -> {parsed_date}")
@@ -190,48 +190,6 @@ class InformationExtractor:
         
         logger.info(f"Data processing complete: {len(processed_data)} fields processed")
         return processed_data
-    
-    def _parse_date_safely(self, date_str: str) -> Optional[date]:
-        """Safely parse a date string using multiple formats"""
-        if not date_str or not isinstance(date_str, str):
-            return None
-        
-        # Clean the date string
-        date_str = date_str.strip()
-        
-        # Skip obviously invalid date strings
-        if len(date_str) < 6 or date_str.lower() in ['not available', 'n/a', 'none', 'null']:
-            return None
-        
-        # Try multiple date formats
-        date_formats = [
-            '%Y-%m-%d',           # 2024-12-31
-            '%d/%m/%Y',           # 31/12/2024
-            '%d-%m-%Y',           # 31-12-2024
-            '%m/%d/%Y',           # 12/31/2024
-            '%B %d, %Y',          # December 31, 2024
-            '%d %B %Y',           # 31 December 2024
-            '%b %d, %Y',          # Dec 31, 2024
-            '%d %b %Y',           # 31 Dec 2024
-            '%Y/%m/%d',           # 2024/12/31
-            '%d.%m.%Y',           # 31.12.2024
-        ]
-        
-        for fmt in date_formats:
-            try:
-                parsed_date = datetime.strptime(date_str, fmt).date()
-                return parsed_date
-            except ValueError:
-                continue
-        
-        # Try using the date_utils if available
-        try:
-            return self.date_utils.parse_date_from_text(date_str)
-        except:
-            pass
-        
-        logger.warning(f"Could not parse date string: '{date_str}'")
-        return None
 
     def _extract_critical_fields_only(self, llm_result: str) -> Dict[str, Any]:
         """Extract only critical fields needed for business logic validation"""

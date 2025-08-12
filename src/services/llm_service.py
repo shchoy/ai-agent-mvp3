@@ -483,7 +483,7 @@ Please consolidate and deduplicate the information, providing a clear, structure
     
     def parse_extraction_result(self, extraction_text: str) -> Dict[str, Any]:
         """
-        Parse the extraction result into structured data
+        Parse the extraction result into structured data using LLM for better accuracy
         
         Args:
             extraction_text: Raw extraction result from LLM
@@ -491,193 +491,124 @@ Please consolidate and deduplicate the information, providing a clear, structure
         Returns:
             Structured dictionary of extracted information
         """
-        # Store the complete LLM extraction as the primary data source
-        
-        parsed_data = {
-            "company_name": None,
-            "contact_person": None, 
-            "contact_email": None,
-            "contact_phone": None,
-            "publish_date": None,
-            "response_date": None,
-            "epu_level": None,
-            "max_tender_value": None,
-            "it_certifications": [],
-            "solution_summary": None,
-            "business_purpose": None,
-            "scope_of_work": None,
-            "technology_stack": [],
-            "cloud_platforms": [],
-            "project_types": [],
-            "managed_services": None,
-            "sla_requirements": None,
-            "project_duration": None,
-            "pricing_schedule": None,
-            "llm_extraction_text": extraction_text,  # Store for UI display
-            "raw_extraction": extraction_text  # Store the complete LLM extraction as primary data
-        }
-        
-        # Debug: Log the first few lines of extraction to see the format
-        lines = extraction_text.split('\n')[:10]  # First 10 lines for debugging
-        logger.info(f"First 10 lines of LLM extraction for parsing:")
-        for i, line in enumerate(lines):
-            logger.info(f"Line {i}: '{line.strip()}'")
-        
-        # Parse structured fields from LLM result with more flexible patterns
-        all_lines = extraction_text.split('\n')
-        
-        for i, line in enumerate(all_lines):
-            line = line.strip()
-            if not line or line.startswith('---'):
-                continue
+        try:
+            # Create a structured parsing prompt
+            parsing_prompt = ChatPromptTemplate.from_template("""
+You are an expert data parser. Your task is to extract specific structured information from the provided tender analysis text and return it in a precise JSON format.
+
+EXTRACTION TEXT:
+{extraction_text}
+
+Extract the following information and return ONLY a valid JSON object with these exact keys:
+
+{{
+    "company_name": "string or null",
+    "contact_person": "string or null", 
+    "contact_email": "string or null",
+    "contact_phone": "string or null",
+    "publish_date": "YYYY-MM-DD string or null",
+    "response_date": "YYYY-MM-DD string or null",
+    "epu_level": "string or null",
+    "max_tender_value": "number or null",
+    "it_certifications": ["array of certification strings"],
+    "solution_summary": "string or null",
+    "business_purpose": "string or null",
+    "scope_of_work": "string or null",
+    "technology_stack": ["array of technology strings"],
+    "cloud_platforms": ["array: aws, azure, gcp, on_premise, hybrid"],
+    "project_types": ["array: cloud_migration, data_platform, big_data, serverless, ai_agents, web_application, mobile_application, infrastructure, cybersecurity"],
+    "managed_services": "boolean or null",
+    "sla_requirements": "string or null",
+    "project_duration": "string or null",
+    "pricing_schedule": "string or null"
+}}
+
+IMPORTANT INSTRUCTIONS:
+1. Return ONLY the JSON object, no other text
+2. Use null for missing information, not "not available" or empty strings
+3. For dates, convert to YYYY-MM-DD format if possible, otherwise null
+4. For max_tender_value, extract only the numeric value (remove currency symbols)
+5. For arrays, return empty arrays [] if no items found
+6. For managed_services, return true/false if mentioned, null if unclear
+7. Be precise - extract exactly what's stated, don't infer
+
+JSON Response:
+""")
+
+            # Create chain with JSON output parser
+            chain = parsing_prompt | self.llm | JsonOutputParser()
             
-            line_lower = line.lower()
+            # Execute parsing
+            result = chain.invoke({"extraction_text": extraction_text})
             
-            # Extract company information - more flexible patterns
-            if any(pattern in line_lower for pattern in [
-                "company", "agency", "organization", "client", "issuer"
-            ]) and ":" in line and not parsed_data["company_name"]:
-                value = line.split(":")[-1].strip()
-                if value and len(value) > 3 and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["company_name"] = value
-                    logger.info(f"Extracted company_name: {value}")
+            # Ensure we have the required structure
+            parsed_data = {
+                "company_name": result.get("company_name"),
+                "contact_person": result.get("contact_person"), 
+                "contact_email": result.get("contact_email"),
+                "contact_phone": result.get("contact_phone"),
+                "publish_date": result.get("publish_date"),
+                "response_date": result.get("response_date"),
+                "epu_level": result.get("epu_level"),
+                "max_tender_value": result.get("max_tender_value"),
+                "it_certifications": result.get("it_certifications", []),
+                "solution_summary": result.get("solution_summary"),
+                "business_purpose": result.get("business_purpose"),
+                "scope_of_work": result.get("scope_of_work"),
+                "technology_stack": result.get("technology_stack", []),
+                "cloud_platforms": result.get("cloud_platforms", []),
+                "project_types": result.get("project_types", []),
+                "managed_services": result.get("managed_services"),
+                "sla_requirements": result.get("sla_requirements"),
+                "project_duration": result.get("project_duration"),
+                "pricing_schedule": result.get("pricing_schedule"),
+                "llm_extraction_text": extraction_text[:1000] if extraction_text else "",  # Store truncated for UI
+                "raw_extraction": extraction_text  # Store complete extraction
+            }
             
-            # Extract contact information
-            elif any(pattern in line_lower for pattern in ["contact person", "contact name"]) and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and len(value) > 3 and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["contact_person"] = value
-                    logger.info(f"Extracted contact_person: {value}")
+            # Log successful extraction
+            extracted_fields = [k for k, v in parsed_data.items() 
+                              if v is not None and v != [] and v != "" 
+                              and k not in ['llm_extraction_text', 'raw_extraction']]
+            logger.info(f"LLM-based parsing extracted {len(extracted_fields)} fields: {extracted_fields}")
             
-            elif "email" in line_lower and "@" in line:
-                # Extract email address from the line
-                import re
-                email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', line)
-                if email_match:
-                    parsed_data["contact_email"] = email_match.group()
-                    logger.info(f"Extracted contact_email: {email_match.group()}")
+            # Log key extracted values for debugging
+            if parsed_data.get("company_name"):
+                logger.info(f"Extracted company_name: {parsed_data['company_name']}")
+            if parsed_data.get("response_date"):
+                logger.info(f"Extracted response_date: {parsed_data['response_date']}")
+            if parsed_data.get("max_tender_value"):
+                logger.info(f"Extracted max_tender_value: {parsed_data['max_tender_value']}")
+            if parsed_data.get("technology_stack"):
+                logger.info(f"Extracted technology_stack: {parsed_data['technology_stack']}")
             
-            elif "phone" in line_lower and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["contact_phone"] = value
-                    logger.info(f"Extracted contact_phone: {value}")
+            return parsed_data
             
-            # Extract dates - more flexible patterns
-            elif any(pattern in line_lower for pattern in ["deadline", "response date", "closing date"]) and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["response_date"] = value
-                    logger.info(f"Extracted response_date: {value}")
-            
-            elif any(pattern in line_lower for pattern in ["publish date", "issue date", "tender date"]) and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["publish_date"] = value
-                    logger.info(f"Extracted publish_date: {value}")
-            
-            # Extract financial information - look for money values
-            elif any(pattern in line_lower for pattern in [
-                "tender value", "award value", "maximum value", "contract value", "budget"
-            ]):
-                # Look for monetary values in current and next few lines
-                for j in range(i, min(i+3, len(all_lines))):
-                    check_line = all_lines[j]
-                    if any(currency in check_line.lower() for currency in ["$", "sgd", "usd"]):
-                        import re
-                        money_match = re.search(r'[\$]?[\d,]+(?:\.\d{2})?', check_line)
-                        if money_match:
-                            value_str = money_match.group().replace('$', '').replace(',', '')
-                            try:
-                                parsed_data["max_tender_value"] = float(value_str)
-                                logger.info(f"Extracted max_tender_value: {parsed_data['max_tender_value']}")
-                            except:
-                                pass
-                        break
-            
-            elif "epu" in line_lower and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["epu_level"] = value
-                    logger.info(f"Extracted epu_level: {value}")
-            
-            # Extract solution information
-            elif any(pattern in line_lower for pattern in ["solution summary", "solution description"]) and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and len(value) > 10 and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["solution_summary"] = value
-                    logger.info(f"Extracted solution_summary: {value[:50]}...")
-            
-            elif any(pattern in line_lower for pattern in ["business purpose", "purpose", "objective"]) and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and len(value) > 10 and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["business_purpose"] = value
-                    logger.info(f"Extracted business_purpose: {value[:50]}...")
-            
-            elif any(pattern in line_lower for pattern in ["scope of work", "scope", "deliverables"]) and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and len(value) > 10 and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["scope_of_work"] = value
-                    logger.info(f"Extracted scope_of_work: {value[:50]}...")
-            
-            # Extract technology information
-            elif any(pattern in line_lower for pattern in ["technology stack", "technologies", "tech stack"]) and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    # Split comma-separated technologies
-                    tech_list = [tech.strip() for tech in value.split(',') if tech.strip()]
-                    if tech_list:
-                        parsed_data["technology_stack"] = tech_list
-                        logger.info(f"Extracted technology_stack: {tech_list}")
-            
-            # Extract project information
-            elif any(pattern in line_lower for pattern in ["project duration", "duration", "timeline"]) and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["project_duration"] = value
-                    logger.info(f"Extracted project_duration: {value}")
-            
-            elif "managed services" in line_lower:
-                line_text = line.lower()
-                if any(yes_word in line_text for yes_word in ["yes", "required", "needed"]):
-                    parsed_data["managed_services"] = True
-                    logger.info("Extracted managed_services: True")
-                elif any(no_word in line_text for no_word in ["no", "not required", "not needed"]):
-                    parsed_data["managed_services"] = False
-                    logger.info("Extracted managed_services: False")
-            
-            elif any(pattern in line_lower for pattern in ["sla", "service level"]) and ":" in line:
-                value = line.split(":")[-1].strip()
-                if value and not any(skip in value.lower() for skip in [
-                    'not available', 'information not available', 'not found', 'n/a', 'none'
-                ]):
-                    parsed_data["sla_requirements"] = value
-                    logger.info(f"Extracted sla_requirements: {value}")
-        
-        # Log summary of what was extracted
-        extracted_fields = [k for k, v in parsed_data.items() if v is not None and v != [] and k not in ['llm_extraction_text', 'raw_extraction']]
-        logger.info(f"Successfully extracted {len(extracted_fields)} fields: {extracted_fields}")
-        
-        return parsed_data
+        except Exception as e:
+            logger.error(f"Error in LLM-based parsing: {str(e)}")
+            # Fallback to basic structure with raw extraction preserved
+            logger.info("Falling back to basic structure due to parsing error")
+            return {
+                "company_name": None,
+                "contact_person": None, 
+                "contact_email": None,
+                "contact_phone": None,
+                "publish_date": None,
+                "response_date": None,
+                "epu_level": None,
+                "max_tender_value": None,
+                "it_certifications": [],
+                "solution_summary": None,
+                "business_purpose": None,
+                "scope_of_work": None,
+                "technology_stack": [],
+                "cloud_platforms": [],
+                "project_types": [],
+                "managed_services": None,
+                "sla_requirements": None,
+                "project_duration": None,
+                "pricing_schedule": None,
+                "llm_extraction_text": extraction_text[:1000] if extraction_text else "",
+                "raw_extraction": extraction_text,
+                "parsing_error": str(e)
+            }
